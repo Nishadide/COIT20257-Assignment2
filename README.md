@@ -1,6 +1,4 @@
-# COIT20257-Assignment2
-Secured edge computing framework for smart farming. Java TCP client-server with RSA mutual authentication, AES session encryption, and multithreaded real-time sensor reporting. COIT20257 Assignment 2.
-# COIT20257 Assignment 2 — Secured Edge Computing Framework
+# COIT20257 Assignment 2 - Secured Edge Computing Framework
 
 A two-layer edge computing framework for a smart-farming scenario, with
 secured communication between the Device Layer and the Edge Layer.
