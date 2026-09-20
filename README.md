@@ -35,12 +35,11 @@ its own key files.
     java -jar IOTDevices.jar        # Edge > Connect, then Security > Authentication
 
 ## Responsibility 
-|------|--------|----------------|
-| Leader | | Contract classes, integration, submission |
-| Edge Server | | TCP server, handler threads, analysis logic |
-| Device Client | | Device layer refactor, reporting and command threads |
-| Security | | Key generation, authentication, encryption |
-| GUI & Docs | | Edge interface, JAR packaging, documentation |
+- Contract classes, integration, submission 
+- Edge Server | | TCP server, handler threads, analysis logic 
+- Device Client | | Device layer refactor, reporting and command threads 
+- Security | | Key generation, authentication, encryption 
+- GUI & Docs | | Edge interface, JAR packaging, documentation 
 
 
 **Key files:** EdgeLayer holds EdgePri.ser, EdgePub.ser, DevicesPub.ser.
