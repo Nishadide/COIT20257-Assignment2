@@ -1,0 +1,15 @@
+# Compiled output - never commit these
+build/
+dist/
+*.class
+
+# NetBeans local settings - personal to each machine
+nbproject/private/
+
+# Generated key files - regenerate with Security/KeyGenerator
+# (remove this line if the team decides to commit the keys instead)
+keys/*.ser
+
+# OS clutter
+.DS_Store
+Thumbs.db
