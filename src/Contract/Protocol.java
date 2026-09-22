@@ -63,7 +63,19 @@ public final class Protocol {
     /** Symmetric key size in bits. */
     public static final int SYMMETRIC_KEY_SIZE = 128;
 
-    /** Symmetric transformation used for every SensorFactor exchanged. */
+    /**
+     * Symmetric transformation used for every SensorFactor exchanged.
+     *
+     * NOTE ON THE MODE. ECB encrypts each block independently, so two
+     * identical plaintext blocks produce two identical ciphertext blocks.
+     * A production system would use an authenticated mode such as
+     * AES/GCM/NoPadding, or at least AES/CBC/PKCS5Padding with a fresh
+     * initialisation vector sent alongside each message. ECB is used here
+     * because it needs no initialisation vector to be carried in the fixed
+     * four fields of the CSAuthenticator defined by the assignment, and
+     * because the exchanged messages are short and varied. The limitation
+     * is recorded here deliberately rather than left unstated.
+     */
     public static final String SYMMETRIC_TRANSFORMATION = "AES/ECB/PKCS5Padding";
 
     /* --------------------------- key files --------------------------- */
