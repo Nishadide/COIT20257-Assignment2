@@ -9,6 +9,7 @@ package DeviceLayer;
 import Contract.DemoLogger;
 import Contract.Protocol;
 import Contract.SensorSpec;
+import Security.SecurityKeys;
 import java.awt.BorderLayout;
 import java.awt.Color;
 import java.awt.Font;
@@ -88,18 +89,45 @@ public class DeviceMain extends JFrame {
     private JMenuItem authenticationItem;
     private JMenuItem demoOnItem;
 
-    /** Program entry point: builds the window on the Event Dispatch Thread. */
+    /**
+     * Program entry point: loads the security keys, then builds the window
+     * on the Event Dispatch Thread.
+     *
+     * @param args optionally, the folder holding the key files. It defaults
+     *             to the current directory, which is where the key files sit
+     *             beside IOTDevices.jar at runtime.
+     */
     public static void main(String[] args) {
+        final String keyDirectory = (args.length > 0) ? args[0] : ".";
+
+        final SecurityKeys keys;
+        try {
+            keys = SecurityKeys.forDeviceLayer(keyDirectory);
+            System.out.println("Device: security keys loaded from "
+                    + new java.io.File(keyDirectory).getAbsolutePath());
+        } catch (Exception e) {
+            System.out.println("Device: could not load the security keys: "
+                    + e.getMessage());
+            JOptionPane.showMessageDialog(null,
+                    "Could not load the security keys.\n" + e.getMessage(),
+                    "Device Layer", JOptionPane.ERROR_MESSAGE);
+            return;
+        }
+
         SwingUtilities.invokeLater(new Runnable() {
             @Override
             public void run() {
-                new DeviceMain().setVisible(true);
+                new DeviceMain(keys).setVisible(true);
             }
         });
     }
 
-    /** Builds the device layer window. */
-    public DeviceMain() {
+    /**
+     * Builds the device layer window.
+     *
+     * @param keys the device layer's security keys
+     */
+    public DeviceMain(SecurityKeys keys) {
         super(TITLE_DISCONNECTED);
         setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
 
@@ -109,7 +137,7 @@ public class DeviceMain extends JFrame {
             actuators[i] = new ActuatorController(sensors[i]);
         }
 
-        connection = new EdgeConnection(this, sensors, actuators, demo);
+        connection = new EdgeConnection(this, sensors, actuators, demo, keys);
 
         buildMenus();
 
@@ -232,20 +260,35 @@ public class DeviceMain extends JFrame {
      * the edge layer and establishes the shared session key.
      */
     private void onAuthentication() {
-        // The CSAuthenticator exchange goes here, using the Security
-        // package: build the first authenticator, send it, verify the
-        // reply, and keep the session key. The call below is what runs
-        // once that has succeeded.
-        System.out.println("Device Layer: Authentication selected.");
+        try {
+            // Performs the CSAuthenticator exchange with the edge layer and
+            // establishes the shared session key. Only when it succeeds do
+            // the sensors begin operating and reporting, as the
+            // specification requires.
+            connection.authenticate();
 
-        // Only after a successful authentication do the sensors begin
-        // operating and reporting, as the specification requires.
-        connection.authenticationComplete();
+            authenticationItem.setEnabled(false);   // done, cannot repeat
+            demoOnItem.setEnabled(true);            // an exchange now exists
 
-        demo.authenticationComplete();
+        } catch (SecurityException e) {
+            // The edge layer failed one of the authentication checks, so it
+            // is not the edge layer it claims to be. The connection is
+            // closed rather than used.
+            System.out.println("Device Layer: " + e.getMessage());
+            JOptionPane.showMessageDialog(this,
+                    "The edge layer could not be authenticated.\n"
+                    + e.getMessage(),
+                    "Authentication", JOptionPane.ERROR_MESSAGE);
+            connection.disconnect();
 
-        authenticationItem.setEnabled(false);   // done, cannot repeat
-        demoOnItem.setEnabled(true);            // now there is an exchange
+        } catch (Exception e) {
+            System.out.println("Device Layer: authentication error: "
+                    + e.getMessage());
+            JOptionPane.showMessageDialog(this,
+                    "Authentication failed.\n" + e.getMessage(),
+                    "Authentication", JOptionPane.ERROR_MESSAGE);
+            connection.disconnect();
+        }
     }
 
     /**

@@ -9,6 +9,7 @@ package EdgeLayer;
 import Contract.DemoLogger;
 import Contract.Protocol;
 import Contract.SensorFactor;
+import Security.SecurityKeys;
 import java.io.IOException;
 import java.net.ServerSocket;
 import java.net.Socket;
@@ -72,10 +73,36 @@ public class EdgeServer {
     private final AtomicInteger connectedDevices = new AtomicInteger(0);
 
     /**
-     * Program entry point. Starts the interface, then the server.
+     * The edge layer's keys: its own private key and the device layer's
+     * public key, loaded once at start-up and shared by every handler.
+     */
+    private SecurityKeys keys;
+
+    /**
+     * Program entry point. Loads the keys, starts the interface, then the
+     * server.
+     *
+     * @param args optionally, the folder holding the key files. It defaults
+     *             to the current directory, which is where the key files sit
+     *             beside EdgeServer.jar at runtime.
      */
     public static void main(String[] args) {
+        String keyDirectory = (args.length > 0) ? args[0] : ".";
+
         EdgeServer server = new EdgeServer();
+
+        // The keys must be present before any device layer can authenticate,
+        // so a missing key file is reported here rather than on the first
+        // connection.
+        try {
+            server.keys = SecurityKeys.forEdgeLayer(keyDirectory);
+            System.out.println("Edge: security keys loaded from "
+                    + new java.io.File(keyDirectory).getAbsolutePath());
+        } catch (Exception e) {
+            System.out.println("Edge: could not load the security keys: "
+                    + e.getMessage());
+            return;
+        }
 
         // The interface is built on the Swing Event Dispatch Thread, and the
         // server runs on the main thread, so neither blocks the other.
@@ -90,6 +117,11 @@ public class EdgeServer {
         });
 
         server.listen(Protocol.EDGE_PORT);
+    }
+
+    /** Sets the security keys, used when the server is started in code. */
+    public void setKeys(SecurityKeys keys) {
+        this.keys = keys;
     }
 
     /** Attaches the monitoring interface to this server. */
@@ -115,7 +147,7 @@ public class EdgeServer {
                 // One thread per connection, so the accept loop is free
                 // again immediately.
                 DeviceHandler handler =
-                        new DeviceHandler(socket, analyser, this, demo);
+                        new DeviceHandler(socket, analyser, this, demo, keys);
                 handler.start();
                 System.out.println("Edge: started " + handler.getName());
             }

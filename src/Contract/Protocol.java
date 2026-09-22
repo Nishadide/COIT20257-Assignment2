@@ -66,17 +66,24 @@ public final class Protocol {
     /**
      * Symmetric transformation used for every SensorFactor exchanged.
      *
-     * NOTE ON THE MODE. ECB encrypts each block independently, so two
-     * identical plaintext blocks produce two identical ciphertext blocks.
-     * A production system would use an authenticated mode such as
-     * AES/GCM/NoPadding, or at least AES/CBC/PKCS5Padding with a fresh
-     * initialisation vector sent alongside each message. ECB is used here
-     * because it needs no initialisation vector to be carried in the fixed
-     * four fields of the CSAuthenticator defined by the assignment, and
-     * because the exchanged messages are short and varied. The limitation
-     * is recorded here deliberately rather than left unstated.
+     * CBC mode is used rather than ECB. ECB encrypts each block
+     * independently, so two identical plaintext blocks produce two
+     * identical ciphertext blocks: because every serialized SensorFactor
+     * begins with the same serialization header, ECB would make every
+     * message start with an identical run of cipher text, which is visible
+     * in the demonstration output and leaks structure to anyone watching
+     * the traffic. CBC chains each block to the one before it, so a fresh
+     * random initialisation vector makes the whole cipher text different
+     * every time, even for identical messages.
+     *
+     * The initialisation vector is generated per message and carried in
+     * the first IV_LENGTH bytes of the cipher text, so no extra field is
+     * needed in the CSAuthenticator defined by the assignment.
      */
-    public static final String SYMMETRIC_TRANSFORMATION = "AES/ECB/PKCS5Padding";
+    public static final String SYMMETRIC_TRANSFORMATION = "AES/CBC/PKCS5Padding";
+
+    /** The AES initialisation vector length, in bytes (one AES block). */
+    public static final int IV_LENGTH = 16;
 
     /* --------------------------- key files --------------------------- */
 

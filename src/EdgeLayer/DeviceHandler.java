@@ -6,46 +6,60 @@
  */
 package EdgeLayer;
 
+import Contract.CSAuthenticator;
 import Contract.DemoLogger;
 import Contract.SensorFactor;
+import Security.Authenticator;
+import Security.CryptoUtil;
+import Security.SecurityKeys;
 import java.io.EOFException;
 import java.io.IOException;
 import java.io.ObjectInputStream;
 import java.io.ObjectOutputStream;
 import java.net.Socket;
+import javax.crypto.SecretKey;
 
 /**
  * DeviceHandler
  * -------------
- * Services ONE connected device layer. The edge server creates a new
- * DeviceHandler for every connection it accepts, so several device layers
- * can be served at the same time, each on its own thread.
+ * Services ONE connected device layer: authenticates it, then exchanges
+ * encrypted sensor statuses and actuator commands with it.
  *
  * THE CONCURRENCY OF THE EDGE SERVER
  * ==================================
  * This class extends java.lang.Thread and puts its work in run(), which is
- * the thread-per-connection architecture described in the unit material: the
- * server's accept loop never blocks on one client's traffic, because each
- * connection is serviced by its own thread. It is the same pattern as the
- * Connection class of the multi-threaded TCP server in the Week 2 and Week 4
- * lectures.
+ * the thread-per-connection architecture described in the unit material:
+ * the server's accept loop never blocks on one client's traffic, because
+ * each connection is serviced by its own thread. It is the same pattern as
+ * the Connection class of the multi-threaded TCP server in the Week 2 and
+ * Week 4 lectures.
+ *
+ * THE TWO PHASES OF A CONNECTION
+ * ==============================
+ * 1. AUTHENTICATION. The first object read must be a CSAuthenticator. It
+ *    is verified, a session key is generated, and a reply authenticator is
+ *    sent back. If the verification fails the connection is closed at once
+ *    and no sensor data is ever processed, which is what the specification
+ *    means by requiring mutual authentication "before the full functions of
+ *    the edge computing framework are enabled".
+ *
+ * 2. SECURED EXCHANGE. Every message thereafter is a SensorFactor encrypted
+ *    with the session key. Nothing is accepted in plain text.
+ *
+ * HOW AN ENCRYPTED SensorFactor TRAVELS
+ * =====================================
+ * A SensorFactor is serialized, encrypted with AES under the session key,
+ * and Base64 encoded, and that STRING is what goes over the stream. So the
+ * cipher text printed in the demonstration output is exactly the bytes
+ * transmitted, which is what makes the sender's printed cipher text
+ * identical to the receiver's.
  *
  * THE STREAM ORDER MATTERS
  * ========================
  * ObjectOutputStream is created BEFORE ObjectInputStream. Constructing an
  * ObjectOutputStream writes a stream header immediately, and constructing an
  * ObjectInputStream blocks until it has read one. If both ends created their
- * input stream first, both would block forever waiting for a header that the
- * other end has not sent. The device layer therefore creates its streams in
- * the same order.
- *
- * RESETTING THE OUTPUT STREAM
- * ===========================
- * ObjectOutputStream caches the objects it has written, and sends a back
- * reference instead of the new contents if it sees the same object again.
- * Because commands are sent repeatedly for the same sensors, reset() is
- * called before each write so the receiver always gets current values rather
- * than a stale cached copy.
+ * input stream first, both would block forever.
  */
 public class DeviceHandler extends Thread {
 
@@ -61,6 +75,19 @@ public class DeviceHandler extends Thread {
     /** The shared demonstration output required by the assignment. */
     private final DemoLogger demo;
 
+    /** The edge layer's own private key and the device layer's public key. */
+    private final SecurityKeys keys;
+
+    /** The session key agreed during authentication. */
+    private SecretKey sessionKey;
+
+    /**
+     * Whether this handler has counted itself as a connected device. Needed
+     * so that a connection which fails authentication does not decrement a
+     * count it never incremented.
+     */
+    private boolean counted = false;
+
     private ObjectOutputStream out;
     private ObjectInputStream  in;
 
@@ -69,19 +96,22 @@ public class DeviceHandler extends Thread {
      * @param analyser the shared decision logic
      * @param server   the edge server, for status callbacks
      * @param demo     the shared demonstration logger
+     * @param keys     the edge layer's security keys
      */
     public DeviceHandler(Socket socket, EdgeAnalyser analyser,
-                         EdgeServer server, DemoLogger demo) {
+                         EdgeServer server, DemoLogger demo,
+                         SecurityKeys keys) {
         super("DeviceHandler-" + socket.getPort());
         this.socket   = socket;
         this.analyser = analyser;
         this.server   = server;
         this.demo     = demo;
+        this.keys     = keys;
     }
 
     /**
-     * Reads reported sensor statuses from this device layer until it
-     * disconnects, replying with a command whenever one is needed.
+     * Authenticates the device layer, then exchanges encrypted sensor
+     * statuses and commands until it disconnects.
      */
     @Override
     public void run() {
@@ -93,26 +123,44 @@ public class DeviceHandler extends Thread {
 
             System.out.println("Edge: device layer connected from "
                     + socket.getInetAddress().getHostAddress());
-            server.deviceConnected();
 
+            // ---- PHASE 1: mutual authentication ----------------------
+            if (!authenticate()) {
+                System.out.println("Edge: authentication failed, "
+                        + "closing the connection.");
+                return;                     // finally{} closes everything
+            }
+            server.deviceConnected();
+            counted = true;
+
+            // ---- PHASE 2: the secured exchange -----------------------
             Object received;
             while ((received = in.readObject()) != null) {
 
-                if (!(received instanceof SensorFactor)) {
-                    System.out.println("Edge: unexpected object received: "
-                            + received.getClass().getName());
+                if (!(received instanceof String)) {
+                    System.out.println("Edge: expected encrypted data but "
+                            + "received " + received.getClass().getName());
                     continue;
                 }
 
-                SensorFactor report = (SensorFactor) received;
+                String cipherText = (String) received;
+                SensorFactor report;
+                try {
+                    report = (SensorFactor)
+                            CryptoUtil.decryptObject(cipherText, sessionKey);
+                } catch (Exception e) {
+                    // A message that does not decrypt under the session key
+                    // did not come from the authenticated device layer. It
+                    // is discarded: this is what stops an attacker in the
+                    // middle injecting a fake SensorFactor.
+                    System.out.println("Edge: a message failed to decrypt "
+                            + "and was discarded.");
+                    continue;
+                }
 
-                // Demonstration output: the cipher text of the message as
-                // it arrived, and the plain text recovered from it. In this
-                // phase the exchange is not yet encrypted, so the marker
-                // below stands in for the Base64 cipher text; when the
-                // security layer is integrated, the received cipher text is
-                // passed here instead and nothing else changes.
-                demo.received(NOT_ENCRYPTED_YET, report);
+                // Demonstration output: the cipher text exactly as it
+                // arrived, and the plain text recovered from it.
+                demo.received(cipherText, report);
                 System.out.println("Edge received: " + report);
 
                 // Show the reported reading on the edge interface.
@@ -136,32 +184,96 @@ public class DeviceHandler extends Thread {
                     + e.getMessage());
         } finally {
             close();
-            server.deviceDisconnected();
+            if (counted) {
+                server.deviceDisconnected();
+            }
         }
     }
 
     /**
-     * Placeholder for the cipher text in the demonstration output, used
-     * while the exchange is still in plain text. Replaced by the real
-     * Base64 cipher text when the security layer is integrated.
+     * Performs the edge layer's half of the mutual authentication:
+     * specification steps 2, 3, 4 and 5.
+     *
+     * @return true if the device layer authenticated successfully
+     * @throws IOException            if the connection fails
+     * @throws ClassNotFoundException if an unknown class arrives
      */
-    private static final String NOT_ENCRYPTED_YET =
-            "(plain text - encryption not yet integrated)";
+    private boolean authenticate()
+            throws IOException, ClassNotFoundException {
+
+        Object first = in.readObject();
+        if (!(first instanceof CSAuthenticator)) {
+            System.out.println("Edge: the first message was not an "
+                    + "authenticator - rejecting the connection.");
+            return false;
+        }
+        CSAuthenticator fromDevice = (CSAuthenticator) first;
+
+        try {
+            // Steps 2 and 3: verify the device layer and recover the
+            // verification string it sent.
+            String verificationString =
+                    Authenticator.verifyDeviceAuthenticator(fromDevice, keys);
+
+            // Step 4: create the session key for this connection.
+            sessionKey = CryptoUtil.generateSessionKey();
+
+            // Step 5: reply, proving the edge layer's identity and that it
+            // could read the verification string.
+            CSAuthenticator reply = Authenticator.createEdgeReply(
+                    keys, verificationString, sessionKey);
+            out.reset();
+            out.writeObject(reply);
+            out.flush();
+
+            // The demonstration output required by the assignment: the
+            // verification string and the session key, each in plain text
+            // and cipher text. The device layer prints the same values.
+            demo.verificationString(verificationString,
+                    reply.getVerficationString());
+            demo.sessionKey(CryptoUtil.encodeSessionKey(sessionKey),
+                    reply.getSessionKey());
+            demo.authenticationComplete();
+
+            System.out.println("Edge: the device layer is authenticated.");
+            return true;
+
+        } catch (SecurityException e) {
+            // The device layer failed a check: it is not who it claims.
+            System.out.println("Edge: " + e.getMessage());
+            return false;
+        } catch (Exception e) {
+            System.out.println("Edge: authentication error: "
+                    + e.getMessage());
+            return false;
+        }
+    }
 
     /**
-     * Sends one command to the device layer.
+     * Encrypts one command with the session key and sends it.
      *
      * @param command the SensorFactor to send
      * @throws IOException if the connection fails
      */
     private void send(SensorFactor command) throws IOException {
-        // Demonstration output: the plain text being sent and the cipher
-        // text actually transmitted. See the note in run().
-        demo.sent(command, NOT_ENCRYPTED_YET);
+        try {
+            String cipherText =
+                    CryptoUtil.encryptObject(command, sessionKey);
 
-        out.reset();               // see the note in the class comment
-        out.writeObject(command);
-        out.flush();
+            // Demonstration output: the plain text being sent and the
+            // cipher text actually transmitted.
+            demo.sent(command, cipherText);
+
+            out.reset();               // see the note in the class comment
+            out.writeObject(cipherText);
+            out.flush();
+
+        } catch (IOException e) {
+            throw e;
+        } catch (Exception e) {
+            System.out.println("Edge: could not encrypt a command: "
+                    + e.getMessage());
+        }
     }
 
     /** Closes the streams and the socket, ignoring failures on the way out. */

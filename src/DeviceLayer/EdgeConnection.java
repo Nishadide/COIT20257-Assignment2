@@ -6,14 +6,19 @@
  */
 package DeviceLayer;
 
+import Contract.CSAuthenticator;
 import Contract.DemoLogger;
 import Contract.SensorFactor;
+import Security.Authenticator;
+import Security.CryptoUtil;
+import Security.SecurityKeys;
 import java.io.IOException;
 import java.io.ObjectInputStream;
 import java.io.ObjectOutputStream;
 import java.net.Socket;
 import java.util.HashMap;
 import java.util.Map;
+import javax.crypto.SecretKey;
 
 /**
  * EdgeConnection
@@ -72,15 +77,32 @@ public class EdgeConnection {
      */
     private volatile boolean authenticated = false;
 
+    /** The device layer's own private key and the edge layer's public key. */
+    private SecurityKeys keys;
+
+    /**
+     * The session key agreed during the mutual authentication.
+     *
+     * Declared volatile because it is written on the Event Dispatch Thread,
+     * by the Security menu's Authentication action, and read by the
+     * reporting and command threads. Those threads are started after the
+     * key is set, which by itself guarantees they see it, but volatile
+     * states the requirement plainly rather than leaving it to be inferred.
+     */
+    private volatile SecretKey sessionKey;
+
     /**
      * @param ui        the device layer window
      * @param sensors   the four sensor panels
      * @param actuators the four actuator threads
      * @param demo      the shared demonstration logger
+     * @param keys      the device layer's security keys
      */
     public EdgeConnection(DeviceMain ui, SensorPanel[] sensors,
-                          ActuatorController[] actuators, DemoLogger demo) {
+                          ActuatorController[] actuators, DemoLogger demo,
+                          SecurityKeys keys) {
         this.ui          = ui;
+        this.keys        = keys;
         this.sensorArray = sensors;
         this.actuators   = actuators;
         this.demo        = demo;
@@ -127,18 +149,54 @@ public class EdgeConnection {
     }
 
     /**
-     * Enables the full functions of the framework, once the mutual
-     * authentication with the edge layer has succeeded: the sensors begin
-     * operating, the command thread starts receiving, and the reporting
-     * thread starts sending.
+     * Performs the device layer's half of the mutual authentication:
+     * specification steps 1, 6, 7, 8 and 9, and then enables the full
+     * functions of the framework.
      *
-     * Called by the Security menu's Authentication action after the
-     * CSAuthenticator exchange completes and the session key is held.
+     * The exchange uses the streams directly. That is safe because
+     * connect() deliberately starts no reading thread, so nothing else can
+     * consume the edge layer's reply.
+     *
+     * @throws Exception if the connection fails or the edge layer cannot
+     *                   be authenticated
      */
-    public void authenticationComplete() {
+    public void authenticate() throws Exception {
         if (!connected || authenticated) {
             return;
         }
+
+        // Step 1: a fresh random verification string for this exchange,
+        // and the authenticator that carries it.
+        String verificationString = CryptoUtil.randomVerificationString();
+        CSAuthenticator toEdge =
+                Authenticator.createDeviceAuthenticator(keys, verificationString);
+
+        out.reset();
+        out.writeObject(toEdge);
+        out.flush();
+
+        // The edge layer replies with its own authenticator.
+        Object reply = in.readObject();
+        if (!(reply instanceof CSAuthenticator)) {
+            throw new SecurityException(
+                    "The edge layer did not reply with an authenticator.");
+        }
+        CSAuthenticator fromEdge = (CSAuthenticator) reply;
+
+        // Steps 6, 7, 8 and 9: recover the session key, verify the edge
+        // layer's identity, and check the verification string came back.
+        sessionKey = Authenticator.verifyEdgeReply(
+                fromEdge, keys, verificationString);
+
+        // The demonstration output required by the assignment: the
+        // verification string and the session key, each in plain text and
+        // cipher text. The edge layer prints the same values.
+        demo.verificationString(verificationString,
+                fromEdge.getVerficationString());
+        demo.sessionKey(CryptoUtil.encodeSessionKey(sessionKey),
+                fromEdge.getSessionKey());
+        demo.authenticationComplete();
+
         authenticated = true;
 
         // The sensors begin operating only now. On start-up, and while
@@ -202,36 +260,69 @@ public class EdgeConnection {
             return;
         }
 
-        // Demonstration output: the plain text being sent and the cipher
-        // text actually transmitted. Until the security layer is
-        // integrated the exchange is in plain text, so the marker below
-        // stands in for the Base64 cipher text; when encryption is added,
-        // the real cipher text is passed here and nothing else changes.
-        demo.sent(status, NOT_ENCRYPTED_YET);
-        System.out.println("Device sent:     " + status);
+        try {
+            // The status is serialized, encrypted with the session key and
+            // Base64 encoded; that string is what travels over the stream,
+            // so the cipher text printed below is exactly what is sent.
+            String cipherText =
+                    CryptoUtil.encryptObject(status, sessionKey);
 
-        out.reset();               // see the note in the class comment
-        out.writeObject(status);
-        out.flush();
+            demo.sent(status, cipherText);
+            System.out.println("Device sent:     " + status);
+
+            out.reset();           // see the note in the class comment
+            out.writeObject(cipherText);
+            out.flush();
+
+        } catch (IOException e) {
+            throw e;
+        } catch (Exception e) {
+            System.out.println("Device: could not encrypt a report: "
+                    + e.getMessage());
+        }
     }
 
     /**
      * Reads one command from the edge layer, blocking until one arrives.
      *
-     * @return the object received, or null if the connection has closed
+     * @return the decrypted command, or null if the message could not be
+     *         decrypted and was discarded
      * @throws IOException            if the connection fails
      * @throws ClassNotFoundException if an unknown class arrives
      */
-    public Object receive() throws IOException, ClassNotFoundException {
+    public SensorFactor receive() throws IOException, ClassNotFoundException {
         if (!connected || in == null) {
             return null;
         }
         Object received = in.readObject();
-
-        if (received instanceof SensorFactor) {
-            demo.received(NOT_ENCRYPTED_YET, (SensorFactor) received);
+        if (received == null) {
+            return null;
         }
-        return received;
+
+        if (!(received instanceof String)) {
+            System.out.println("Device: expected encrypted data but received "
+                    + received.getClass().getName());
+            return null;
+        }
+
+        String cipherText = (String) received;
+        try {
+            SensorFactor command = (SensorFactor)
+                    CryptoUtil.decryptObject(cipherText, sessionKey);
+
+            // Demonstration output: the cipher text exactly as it arrived,
+            // and the plain text recovered from it.
+            demo.received(cipherText, command);
+            return command;
+
+        } catch (Exception e) {
+            // A message that does not decrypt under the session key did not
+            // come from the authenticated edge layer, so it is discarded.
+            // This is what stops an attacker injecting a fake SensorFactor.
+            System.out.println("Device: a message failed to decrypt "
+                    + "and was discarded.");
+            return null;
+        }
     }
 
     /** @return true while the device layer is connected. */
@@ -243,14 +334,6 @@ public class EdgeConnection {
     public boolean isAuthenticated() {
         return authenticated;
     }
-
-    /**
-     * Placeholder for the cipher text in the demonstration output, used
-     * while the exchange is still in plain text. Replaced by the real
-     * Base64 cipher text when the security layer is integrated.
-     */
-    private static final String NOT_ENCRYPTED_YET =
-            "(plain text - encryption not yet integrated)";
 
     /** Closes the streams and socket, ignoring failures on the way out. */
     private void closeQuietly() {

@@ -6,6 +6,7 @@
  */
 package DeviceLayer;
 
+import Contract.Protocol;
 import Contract.SensorFactor;
 import Contract.SensorSpec;
 import java.awt.BorderLayout;
@@ -267,9 +268,9 @@ public class SensorPanel extends JPanel {
     public void stepTowardsPerfect() {
         int value = slider.getValue();
         if (value < spec.getPerfect()) {
-            slider.setValue(value + 1);
+            slider.setValue(value + Protocol.ACTUATOR_STEP);
         } else if (value > spec.getPerfect()) {
-            slider.setValue(value - 1);
+            slider.setValue(value - Protocol.ACTUATOR_STEP);
         }
         currentValue = slider.getValue();
     }

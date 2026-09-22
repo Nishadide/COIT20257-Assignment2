@@ -1,0 +1,188 @@
+COIT20257 Distributed Systems - Assignment 2
+A Secured Edge Computing Framework
+HOW TO RUN
+============================================================
+
+WHAT IS IN THIS FOLDER
+----------------------
+src\            the Java source, four packages:
+                  Contract     the shared classes both layers use
+                  EdgeLayer    the edge server
+                  DeviceLayer  the four IoT sensors
+                  Security     the cryptography and the authentication
+keys\           the four key files, and where each one belongs
+Run\            the two ready-to-run programs
+                  Run\EdgeLayer\    EdgeServer.jar   + EdgePri.ser, DevicesPub.ser
+                  Run\DeviceLayer\  IOTDevices.jar   + DevicesPri.ser, EdgePub.ser
+verification\   the test harnesses used during development
+                (NOT part of the submitted program, kept for evidence)
+
+
+============================================================
+WAY 1: RUN THE READY-MADE PROGRAMS (the quickest way)
+============================================================
+Nothing to compile. You only need Java installed.
+
+STEP 1  Open a Command Prompt.
+        Press the Windows key, type   cmd   and press Enter.
+
+STEP 2  Go to the edge layer folder and start the server.
+            cd <where you put this folder>\COIT20257-Assignment2\Run\EdgeLayer
+            java -jar EdgeServer.jar
+
+        You should see, in the Command Prompt:
+            Edge: security keys loaded from ...\Run\EdgeLayer
+            Server is listening on port 8888
+        and the "Edge Layer" window opens.
+
+        LEAVE THIS WINDOW OPEN. The server runs until you close it.
+
+STEP 3  Open a SECOND Command Prompt.
+
+STEP 4  Go to the device layer folder and start the sensors.
+            cd <where you put this folder>\COIT20257-Assignment2\Run\DeviceLayer
+            java -jar IOTDevices.jar
+
+        The "Device Layer: Edge Disconnected!" window opens with the four
+        sensors: Temperature, Humidity, Moisture, Light.
+
+STEP 5  In the Device Layer window:  Edge  >  Connect
+        A small dialog asks for the host name and the port.
+        Leave them as     localhost     and     8888     and click OK.
+
+        The title changes to "Device Layer: Edge Connected!"
+        Nothing is reported yet. That is deliberate: the specification
+        requires mutual authentication before the framework's functions
+        are enabled.
+
+STEP 6  In the Device Layer window:  Security  >  Authentication
+
+        The Command Prompt prints:
+            Device Layer: the mutual authentication is done!
+            Device: reporting started.
+        The four sensors now report every three seconds and the Edge Layer
+        window fills with their readings.
+
+STEP 7  In the Device Layer window:  Security  >  Demo On
+        (do the same in the Edge Layer window)
+
+        Both Command Prompts now print the first five messages in plain
+        text and in cipher text, which is the demonstration the assignment
+        asks for.
+
+STEP 8  Drag a slider out of its ideal range, for example Temperature up
+        to 28. Within three seconds the edge layer commands the alarm and
+        the actuator, and the reading is corrected one step at a time
+        until it reaches its perfect value.
+
+STEP 9  To stop: Edge > Disconnect in the Device Layer, then close both
+        windows. Press Ctrl+C in the server's Command Prompt.
+
+
+RUNNING THE TWO LAYERS ON TWO DIFFERENT COMPUTERS
+-------------------------------------------------
+This is what the edge computing model actually describes, and it is worth
+showing.
+
+  a. Copy Run\EdgeLayer   to computer 1.
+  b. Copy Run\DeviceLayer to computer 2.
+  c. On computer 1, find its IP address:   ipconfig
+     Look for the IPv4 Address, for example 192.168.1.15
+  d. Start EdgeServer.jar on computer 1 as in STEP 2.
+  e. On computer 2, start IOTDevices.jar, then Edge > Connect and type
+     the IP address of computer 1 instead of localhost. Port stays 8888.
+  f. If it will not connect, allow Java through the Windows Firewall on
+     computer 1, or turn the firewall off for the private network while
+     you demonstrate.
+
+
+============================================================
+WAY 2: OPEN THE PROJECT IN NETBEANS
+============================================================
+STEP 1  NetBeans:  File  >  New Project
+                   Java with Ant  >  Java Project with Existing Sources
+                   Next
+
+STEP 2  Project Name:      COIT20257-Assignment2
+        Project Folder:    anywhere you like
+        Next
+
+STEP 3  Source Package Folders:  Add Folder...
+        Choose the   src   folder inside COIT20257-Assignment2
+        Next, then Finish.
+
+STEP 4  Right-click the project  >  Clean and Build.
+        It must build with no errors.
+
+STEP 5  There are TWO programs in this project, so do NOT use the green
+        Run button, which runs only one main class. Instead:
+
+        a. Open   EdgeLayer  >  EdgeServer.java
+           Right-click inside the file  >  Run File      (Shift+F6)
+           The Output window shows "Server is listening on port 8888".
+
+        b. Open   DeviceLayer  >  DeviceMain.java
+           Right-click inside the file  >  Run File      (Shift+F6)
+           The Device Layer window opens.
+
+        NetBeans gives each program its own Output tab, so you can see
+        both sides at once.
+
+STEP 6  Follow STEP 5 to STEP 8 of Way 1: Connect, Authentication,
+        Demo On, then move a slider.
+
+NOTE ON THE KEY FILES IN NETBEANS
+        You do not have to do anything. The program looks for the key
+        files in the folder it is run from, then in a "keys" folder
+        beside it, then one and two levels above. Running from the
+        project root finds   keys\   automatically.
+
+        If you ever move the keys somewhere unusual, you can name the
+        folder on the command line:
+            java -jar EdgeServer.jar C:\path\to\the\keys
+
+
+============================================================
+REGENERATING THE KEY FILES (only if you ever need to)
+============================================================
+The four key files are already supplied, so this is not normally needed.
+If you regenerate them, BOTH layers must be given the new set, because a
+key from an old pair will fail the authentication.
+
+    cd COIT20257-Assignment2
+    javac -d build src\Contract\*.java src\Security\*.java
+    java -cp build Security.KeyGenerator
+
+It writes the four files and says which file belongs in which folder:
+    EdgePri.ser     and  DevicesPub.ser   ->  the EDGE layer folder
+    DevicesPri.ser  and  EdgePub.ser      ->  the DEVICE layer folder
+
+A private key must never be copied into the other layer's folder. The
+whole authentication rests on each layer being the only holder of its own
+private key.
+
+
+============================================================
+IF SOMETHING GOES WRONG
+============================================================
+"java is not recognised"
+        Java is not on the PATH. Install a JDK, or use the full path to
+        java.exe.
+
+"Address already in use"
+        An edge server is already running on port 8888. Close it, or
+        check Task Manager for a leftover java.exe.
+
+"Could not connect to the edge layer"
+        The server is not running, or the host name or port is wrong, or
+        a firewall is blocking port 8888.
+
+"The key files were not found"
+        The message lists every folder it looked in. Put the two key
+        files that layer needs into one of them.
+
+The alarm does not clear as soon as the reading comes back in range
+        That is correct behaviour. The alarm follows the ideal range, but
+        the actuator keeps running until the reading reaches the perfect
+        value, which is how the assignment's demonstration document
+        behaves.

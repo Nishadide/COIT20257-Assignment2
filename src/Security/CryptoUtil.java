@@ -22,6 +22,7 @@ import java.util.Base64;
 import javax.crypto.Cipher;
 import javax.crypto.KeyGenerator;
 import javax.crypto.SecretKey;
+import javax.crypto.spec.IvParameterSpec;
 import javax.crypto.spec.SecretKeySpec;
 
 /**
@@ -197,10 +198,8 @@ public final class CryptoUtil {
      */
     public static String aesEncrypt(String plainText, SecretKey sessionKey)
             throws Exception {
-        Cipher cipher = Cipher.getInstance(Protocol.SYMMETRIC_TRANSFORMATION);
-        cipher.init(Cipher.ENCRYPT_MODE, sessionKey);
         return Base64.getEncoder().encodeToString(
-                cipher.doFinal(plainText.getBytes("UTF-8")));
+                aesEncryptBytes(plainText.getBytes("UTF-8"), sessionKey));
     }
 
     /**
@@ -213,11 +212,64 @@ public final class CryptoUtil {
      */
     public static String aesDecrypt(String cipherText, SecretKey sessionKey)
             throws Exception {
+        return new String(aesDecryptBytes(
+                Base64.getDecoder().decode(cipherText), sessionKey), "UTF-8");
+    }
+
+    /* ---------------- CBC with a per-message IV ---------------------- */
+
+    /**
+     * Encrypts bytes with the session key in CBC mode, generating a fresh
+     * random initialisation vector and placing it in front of the cipher
+     * text.
+     *
+     * The IV does not have to be secret, only unpredictable and different
+     * for every message, so carrying it in the clear at the front of the
+     * cipher text is both safe and the usual practice. It is what makes two
+     * identical messages encrypt to completely different cipher texts.
+     *
+     * @param plain      the bytes to encrypt
+     * @param sessionKey the shared session key
+     * @return the IV followed by the cipher text
+     * @throws Exception if the key is unusable
+     */
+    private static byte[] aesEncryptBytes(byte[] plain, SecretKey sessionKey)
+            throws Exception {
+        byte[] iv = new byte[Protocol.IV_LENGTH];
+        RANDOM.nextBytes(iv);
+
         Cipher cipher = Cipher.getInstance(Protocol.SYMMETRIC_TRANSFORMATION);
-        cipher.init(Cipher.DECRYPT_MODE, sessionKey);
-        return new String(
-                cipher.doFinal(Base64.getDecoder().decode(cipherText)),
-                "UTF-8");
+        cipher.init(Cipher.ENCRYPT_MODE, sessionKey, new IvParameterSpec(iv));
+        byte[] encrypted = cipher.doFinal(plain);
+
+        byte[] result = new byte[iv.length + encrypted.length];
+        System.arraycopy(iv, 0, result, 0, iv.length);
+        System.arraycopy(encrypted, 0, result, iv.length, encrypted.length);
+        return result;
+    }
+
+    /**
+     * Decrypts bytes produced by aesEncryptBytes, taking the initialisation
+     * vector from the front of the data.
+     *
+     * @param data       the IV followed by the cipher text
+     * @param sessionKey the shared session key
+     * @return the recovered bytes
+     * @throws Exception if the data or the key is wrong
+     */
+    private static byte[] aesDecryptBytes(byte[] data, SecretKey sessionKey)
+            throws Exception {
+        if (data.length <= Protocol.IV_LENGTH) {
+            throw new IllegalArgumentException(
+                    "The cipher text is too short to contain an "
+                    + "initialisation vector.");
+        }
+        byte[] iv = new byte[Protocol.IV_LENGTH];
+        System.arraycopy(data, 0, iv, 0, iv.length);
+
+        Cipher cipher = Cipher.getInstance(Protocol.SYMMETRIC_TRANSFORMATION);
+        cipher.init(Cipher.DECRYPT_MODE, sessionKey, new IvParameterSpec(iv));
+        return cipher.doFinal(data, iv.length, data.length - iv.length);
     }
 
     /* ================= session key as text ============================ */
@@ -262,10 +314,8 @@ public final class CryptoUtil {
      */
     public static String encryptObject(Object object, SecretKey sessionKey)
             throws Exception {
-        Cipher cipher = Cipher.getInstance(Protocol.SYMMETRIC_TRANSFORMATION);
-        cipher.init(Cipher.ENCRYPT_MODE, sessionKey);
         return Base64.getEncoder().encodeToString(
-                cipher.doFinal(toBytes(object)));
+                aesEncryptBytes(toBytes(object), sessionKey));
     }
 
     /**
@@ -278,10 +328,8 @@ public final class CryptoUtil {
      */
     public static Object decryptObject(String cipherText, SecretKey sessionKey)
             throws Exception {
-        Cipher cipher = Cipher.getInstance(Protocol.SYMMETRIC_TRANSFORMATION);
-        cipher.init(Cipher.DECRYPT_MODE, sessionKey);
-        return fromBytes(cipher.doFinal(
-                Base64.getDecoder().decode(cipherText)));
+        return fromBytes(aesDecryptBytes(
+                Base64.getDecoder().decode(cipherText), sessionKey));
     }
 
     /** Serializes an object to bytes. */

@@ -71,17 +71,16 @@ public class CommandThread extends Thread {
     public void run() {
         try {
             while (running) {
-                Object received = connection.receive();
-                if (received == null) {
-                    break;                       // connection closed
-                }
-                if (!(received instanceof SensorFactor)) {
-                    System.out.println("Device: unexpected object received: "
-                            + received.getClass().getName());
+                // receive() decrypts the message with the session key. It
+                // returns null when a message could not be decrypted, which
+                // means it did not come from the authenticated edge layer;
+                // such a message is skipped, NOT treated as a closed
+                // connection. A genuinely closed connection throws
+                // EOFException instead, which is caught below.
+                final SensorFactor command = connection.receive();
+                if (command == null) {
                     continue;
                 }
-
-                final SensorFactor command = (SensorFactor) received;
                 System.out.println("Device received command: " + command);
 
                 final SensorPanel sensor = sensors.get(command.getType());

@@ -1,0 +1,28 @@
+WHICH KEY FILE GOES WHERE
+=========================
+
+THE EDGE LAYER folder holds:
+    EdgePri.ser       the edge layer's own PRIVATE key
+    DevicesPub.ser    the device layer's PUBLIC key
+
+THE DEVICE LAYER folder holds:
+    DevicesPri.ser    the device layer's own PRIVATE key
+    EdgePub.ser       the edge layer's PUBLIC key
+
+A private key never leaves its own layer. That is the assumption the whole
+mutual authentication rests on:
+
+  - Only the edge layer holds EdgePri.ser, so only the edge layer can
+    produce E("EDGE", Private(EDGE)), and only the edge layer can read the
+    verification string that was encrypted with EdgePub.ser.
+
+  - Only the device layer holds DevicesPri.ser, so only the device layer
+    can produce E("DEVICES", Private(DEVICES)), and only the device layer
+    can recover the session key that was encrypted with DevicesPub.ser.
+
+If you copy a private key into the other layer's folder, an attacker who
+reaches that folder can impersonate the layer it belongs to, and the
+authentication proves nothing.
+
+The copies in this folder are the master set. Run\EdgeLayer and
+Run\DeviceLayer already hold the correct two files each.
